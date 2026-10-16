@@ -36,18 +36,6 @@ enum DiskImageFormat: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Frame slots available after accounting for system + player overhead.
-    /// PRODOS (~35 blocks) + BASIC.SYSTEM (~21 blocks) + directory (~4) +
-    /// bitmap (1 block for ≤4096-blk volumes, 16 blocks for 32 MB) +
-    /// our STARTUP/PLAY/player BINs (~5 blocks). Conservative — the
-    /// real allocator's `addFile()` return is the truth.
-    func maxFrames(bytesPerFrame: Int) -> Int {
-        let bitmapBlocks   = (totalBlocks + 4095) / 4096
-        let overheadBlocks = 70 + bitmapBlocks
-        let usableBytes    = max(0, (totalBlocks - overheadBlocks) * 512)
-        let blocksPerFrame = max(1, (bytesPerFrame + 511) / 512)
-        return usableBytes / (blocksPerFrame * 512)
-    }
 }
 
 /// Wraps raw ProDOS block data in the requested container format and

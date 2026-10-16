@@ -16,7 +16,19 @@ class ProDOSWriter {
     private let ENTRIES_PER_BLOCK = 13  // 0x0D
     private let ENTRY_LENGTH = 39       // 0x27
 
+    /// Largest file ProDOS can represent: the EOF field is 24 bits, and a
+    /// tree file's master index holds 128 index blocks × 256 data blocks.
+    static let maxFileSize = 0xFFFFFF
+
     private init() {}
+
+    /// Total blocks (data + index) a file of `size` bytes occupies on disk.
+    static func blocksRequired(forFileSize size: Int) -> Int {
+        let data = max(1, (size + 511) / 512)
+        if data == 1   { return 1 }                        // seedling
+        if data <= 256 { return data + 1 }                 // sapling
+        return data + (data + 255) / 256 + 1               // tree
+    }
 
     // MARK: - Sanitize Filename
 
@@ -110,6 +122,13 @@ class ProDOSWriter {
             do {
                 let sanitizedName = self.sanitizeProDOSFilename(fileName)
 
+                guard fileData.count <= ProDOSWriter.maxFileSize else {
+                    DispatchQueue.main.async {
+                        completion(false, "File is \(fileData.count) bytes — ProDOS files are limited to 16 MB")
+                    }
+                    return
+                }
+
                 guard let diskData = NSMutableData(contentsOf: diskImagePath) else {
                     DispatchQueue.main.async {
                         completion(false, "Could not read disk image")
@@ -160,12 +179,11 @@ class ProDOSWriter {
                 // Handle index blocks for larger files
                 var keyBlock = 0
                 var totalBlocks = dataBlocks.count
+                let storageType: UInt8
 
-                if dataBlocks.isEmpty {
-                    keyBlock = 0
-                    totalBlocks = 0
-                } else if dataBlocks.count > 256 {
+                if dataBlocks.count > 256 {
                     // Tree file
+                    storageType = 3
                     let numIndexBlocks = (dataBlocks.count + 255) / 256
                     guard let indexBlocks = self.allocateBlocks(diskData, count: numIndexBlocks),
                           let masterIndexBlocks = self.allocateBlocks(diskData, count: 1) else {
@@ -189,6 +207,7 @@ class ProDOSWriter {
 
                 } else if dataBlocks.count > 1 {
                     // Sapling file
+                    storageType = 2
                     guard let indexBlocks = self.allocateBlocks(diskData, count: 1) else {
                         DispatchQueue.main.async {
                             completion(false, "Could not allocate index block")
@@ -200,13 +219,15 @@ class ProDOSWriter {
                     self.createIndexBlock(diskData, indexBlock: keyBlock, dataBlocks: dataBlocks)
                 } else {
                     // Seedling file
+                    storageType = 1
                     keyBlock = dataBlocks[0]
                 }
 
                 // Create directory entry
                 self.createDirectoryEntry(diskData, dirBlock: dirBlock, entryOffset: entryOffset,
                                          fileName: finalName, fileType: fileType, auxType: auxType,
-                                         keyBlock: keyBlock, blockCount: totalBlocks, fileSize: fileData.count)
+                                         storageType: storageType, keyBlock: keyBlock,
+                                         blockCount: totalBlocks, fileSize: fileData.count)
 
                 // Update file count
                 self.incrementFileCount(diskData)
@@ -363,44 +384,35 @@ class ProDOSWriter {
     private func allocateBlocks(_ diskData: NSMutableData, count: Int) -> [Int]? {
         guard count > 0 else { return [] }
 
+        // Work directly on the image bytes. Wrapping `diskData` in a `Data`
+        // per block copies the whole image each time, which made adding a
+        // multi-MB file to a 32 MB volume take minutes.
+        let bytes = diskData.mutableBytes.assumingMemoryBound(to: UInt8.self)
+        let volOffset = VOLUME_DIR_BLOCK * BLOCK_SIZE
+        guard diskData.length >= volOffset + BLOCK_SIZE else { return nil }
+
+        let totalBlocks = Int(bytes[volOffset + 0x29]) | (Int(bytes[volOffset + 0x2A]) << 8)
+        let bitmapStartBlock = Int(bytes[volOffset + 0x27]) | (Int(bytes[volOffset + 0x28]) << 8)
+        let bitmapOffset = bitmapStartBlock * BLOCK_SIZE
+        guard diskData.length >= bitmapOffset + (totalBlocks + 7) / 8 else { return nil }
+
+        // Find the free blocks first so a failed allocation leaves the
+        // bitmap untouched. The bitmap already marks boot, directory and
+        // bitmap blocks as used, so scanning from block 0 is safe.
         var allocatedBlocks: [Int] = []
-
-        guard let volBlock = readBlock(Data(referencing: diskData), blockIndex: VOLUME_DIR_BLOCK) else {
-            return nil
-        }
-
-        let totalBlocksLo = Int(volBlock[0x29])
-        let totalBlocksHi = Int(volBlock[0x2A])
-        let totalBlocks = totalBlocksLo | (totalBlocksHi << 8)
-
-        let startBlock = 24
-        let bitmapStartBlock = 6
-
-        for block in startBlock..<totalBlocks {
-            if allocatedBlocks.count >= count { break }
-
-            let byteIndex = block / 8
-            let bitPosition = 7 - (block % 8)
-            let bitmapBlock = bitmapStartBlock + (byteIndex / BLOCK_SIZE)
-            let bitmapByteOffset = byteIndex % BLOCK_SIZE
-
-            guard let bitmapBlockData = readBlock(Data(referencing: diskData), blockIndex: bitmapBlock) else {
-                continue
-            }
-
-            let bitmapByte = bitmapBlockData[bitmapByteOffset]
-            let isFree = (bitmapByte & (1 << bitPosition)) != 0
-
-            if isFree {
+        allocatedBlocks.reserveCapacity(count)
+        for block in 0..<totalBlocks where allocatedBlocks.count < count {
+            let mask = UInt8(1 << (7 - (block % 8)))
+            if bytes[bitmapOffset + block / 8] & mask != 0 {
                 allocatedBlocks.append(block)
-
-                var mutableBitmapBlock = bitmapBlockData
-                mutableBitmapBlock[bitmapByteOffset] = bitmapByte & ~(1 << bitPosition)
-                writeBlock(diskData, blockIndex: bitmapBlock, blockData: mutableBitmapBlock)
             }
         }
+        guard allocatedBlocks.count >= count else { return nil }
 
-        return allocatedBlocks.count >= count ? allocatedBlocks : nil
+        for block in allocatedBlocks {
+            bytes[bitmapOffset + block / 8] &= ~UInt8(1 << (7 - (block % 8)))
+        }
+        return allocatedBlocks
     }
 
     private func writeFileData(_ diskData: NSMutableData, fileData: Data, blocks: [Int]) {
@@ -443,17 +455,8 @@ class ProDOSWriter {
 
     private func createDirectoryEntry(_ diskData: NSMutableData, dirBlock: Int, entryOffset: Int,
                                      fileName: String, fileType: UInt8, auxType: UInt16,
-                                     keyBlock: Int, blockCount: Int, fileSize: Int) {
+                                     storageType: UInt8, keyBlock: Int, blockCount: Int, fileSize: Int) {
         guard var blockData = readBlock(Data(referencing: diskData), blockIndex: dirBlock) else { return }
-
-        let storageType: UInt8
-        if blockCount == 0 || blockCount == 1 {
-            storageType = 1  // Seedling
-        } else if blockCount <= 256 {
-            storageType = 2  // Sapling
-        } else {
-            storageType = 3  // Tree
-        }
 
         var nameBytes = [UInt8](repeating: 0x00, count: 15)
         let nameData = fileName.uppercased().data(using: .ascii) ?? Data()

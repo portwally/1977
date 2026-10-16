@@ -84,6 +84,71 @@ struct VideoDiskExporter {
         return d
     }
 
+    // MARK: - Capacity
+
+    /// PRODOS + BASIC.SYSTEM from the bundled template, read once. Their
+    /// sizes feed the capacity calculation below.
+    private static let systemFiles: (prodos: Data, basic: Data)? = {
+        guard let url  = Bundle.main.url(forResource: "ProDOS_2_0_3", withExtension: "po"),
+              let tpl  = try? Data(contentsOf: url),
+              let p    = ProDOSWriter.shared.extractFileFromProDOS(tpl, fileName: "PRODOS"),
+              let b    = ProDOSWriter.shared.extractFileFromProDOS(tpl, fileName: "BASIC.SYSTEM")
+        else { return nil }
+        return (p.data, b.data)
+    }()
+
+    /// Largest frame count per mode that fits on `format` with the given
+    /// modes, counting every block the export writes (boot/directory/
+    /// bitmap, PRODOS, BASIC.SYSTEM, STARTUP, each mode's wrapper +
+    /// player + frames file including index blocks). Each frames file is
+    /// also capped at the 16 MB ProDOS file-size limit.
+    static func maxFrames(format: DiskImageFormat,
+                          has40: Bool, has80: Bool,
+                          hasLo: Bool, hasDl: Bool) -> Int {
+        // Per-mode frame size, wrapper source and player binary.
+        var modes: [(frameBytes: Int, wrapper: String, player: [UInt8])] = []
+        if has40 { modes.append((1024, playWrapperSource(label: "", binName: "PLAY40.BIN"), VideoMLPlayer.play40Bytes)) }
+        if has80 { modes.append((2048, playWrapperSource(label: "", binName: "PLAY80.BIN"), VideoMLPlayer.play80Bytes)) }
+        if hasLo { modes.append((1024, playWrapperSource(label: "", binName: "PLAYLO.BIN"), VideoMLPlayer.playLoresBytes)) }
+        if hasDl { modes.append((2048, playWrapperSource(label: "", binName: "PLAYDL.BIN"), VideoMLPlayer.playDloresBytes)) }
+        guard !modes.isEmpty else { return 0 }
+
+        let blocks = ProDOSWriter.blocksRequired(forFileSize:)
+        let total  = format.totalBlocks
+
+        // Fixed overhead: blocks 0-5 (boot + volume directory) + bitmap.
+        var fixed = 6 + ((total + 4095) / 4096)
+        if let sys = systemFiles {
+            fixed += blocks(sys.prodos.count) + blocks(sys.basic.count)
+        } else {
+            fixed += 35 + 21   // ProDOS 2.0.3 sizes, if the template can't be read
+        }
+        // STARTUP — sized with 5-digit frame counts so it's an upper bound.
+        let startup = startupSource(has40: has40, has80: has80, hasLo: hasLo, hasDl: hasDl,
+                                    count40: 99_999, count80: 99_999,
+                                    countLo: 99_999, countDl: 99_999)
+        fixed += blocks(ApplesoftTokenizer.tokenize(startup).count)
+        for m in modes {
+            fixed += blocks(ApplesoftTokenizer.tokenize(m.wrapper).count) + blocks(m.player.count)
+        }
+
+        func fits(_ n: Int) -> Bool {
+            fixed + modes.reduce(0) { $0 + blocks(n * $1.frameBytes) } <= total
+        }
+
+        // Upper bound: the ProDOS file-size limit and the player's 16-bit
+        // frame counter.
+        var hi = modes.map { ProDOSWriter.maxFileSize / $0.frameBytes }.min() ?? 0
+        hi = min(hi, 0xFFFF)
+        var lo = 0
+        guard fits(0) else { return 0 }
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if fits(mid) { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
+    }
+
     // MARK: - Public entry point
 
     static func export(

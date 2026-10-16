@@ -83,9 +83,13 @@ final class VideoConverterViewModel: ObservableObject {
 
     // MARK: - Computed
 
-    /// Frames the chosen disk format can hold (with our overhead estimate).
+    /// Frames the chosen disk format can hold for the selected mode(s).
     var maxFrames: Int {
-        diskFormat.maxFrames(bytesPerFrame: colMode.bytesPerFrame)
+        VideoDiskExporter.maxFrames(format: diskFormat,
+                                    has40: colMode.includes40,
+                                    has80: colMode.includes80,
+                                    hasLo: colMode.includesLores40,
+                                    hasDl: colMode.includesDlores80)
     }
 
     /// Frames we'll actually export (whichever is smaller).
