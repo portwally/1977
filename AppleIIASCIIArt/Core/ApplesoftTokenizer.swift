@@ -111,10 +111,9 @@ class ApplesoftTokenizer {
             }
 
             if inString {
-                // Inside string - copy characters as plain ASCII (NO high bit)
-                if let asciiValue = remaining.first?.asciiValue {
-                    tokenizedContent.append(asciiValue)
-                }
+                // Inside string - copy characters as plain ASCII (NO high bit).
+                // Non-ASCII becomes a space so string contents keep their width.
+                tokenizedContent.append(remaining.first?.asciiValue ?? UInt8(ascii: " "))
                 remaining.removeFirst()
                 continue
             }

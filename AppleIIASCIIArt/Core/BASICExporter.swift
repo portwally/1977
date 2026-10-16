@@ -45,7 +45,13 @@ struct BASICExporter {
         let isFullScreen = totalRows >= 24
 
         for (idx, row) in result.grid.enumerated() {
-            var rowStr = String(row)
+            // Characters outside printable ASCII (Unicode block ramps,
+            // etc.) don't exist on the Apple II — print them as spaces so
+            // the row keeps its width.
+            var rowStr = String(row.map { ch -> Character in
+                guard let v = ch.asciiValue, v >= 0x20 && v < 0x7F else { return " " }
+                return ch
+            })
             let isLastRow = (idx == totalRows - 1)
 
             // Drop bottom-right cell on full-screen art to avoid scroll.

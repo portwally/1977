@@ -5,10 +5,12 @@ struct TextExporter {
     // Apple II plain text: 7-bit ASCII, CR (0x0D) line endings
     static func saveAppleIIText(_ result: ASCIIResult, to url: URL) throws {
         let text = result.asAppleIIText()
-        let safe = text.filter { c in
-            guard let v = c.asciiValue else { return false }
-            return v >= 0x20 && v <= 0x7E || v == 0x0D
-        }
+        // Replace (not drop) anything outside printable ASCII so rows
+        // keep their width.
+        let safe = String(text.map { c -> Character in
+            guard let v = c.asciiValue, v >= 0x20 && v <= 0x7E || v == 0x0D else { return " " }
+            return c
+        })
         guard let data = safe.data(using: .ascii) else {
             throw ExportError.encodingFailed
         }

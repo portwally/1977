@@ -26,14 +26,16 @@ enum VideoMLPlayer {
 
     // MARK: - 40-column player
     //
-    // Total size: 155 bytes ($0900-$099A).
+    // Core: 162 bytes ($0900-$09A1); `withDelay` appends DELAY at $09A2.
     // Code path:
     //   • INIT — copy FRAME counter to REMAIN; MLI OPEN FRAMES40; HOME.
     //   • LOOP — if REMAIN==0, jump to DONE. MLI READ 1024 → $2000.
     //            Unrolled 4-page copy to $0400. Delay loop. Decrement
     //            REMAIN. Repeat.
     //   • DONE — MLI CLOSE, RTS to BASIC.
-    static let play40Bytes: [UInt8] = [
+    static let play40Bytes: [UInt8] = withDelay(play40Core, ldyOffset: 0x53)
+
+    private static let play40Core: [UInt8] = [
         // --- Header: JMP to ENTRY_STUB, then the patchable data bytes ---
         // BRUN lands at $0900, so $0900-$0902 must be executable.
         // Entry goes via a diagnostic stub at $0977 (in the padding
@@ -90,6 +92,8 @@ enum VideoMLPlayer {
         0xD0, 0xE5,             // $0951 BNE -27 → $0938 (COPY)
 
         // --- Delay (FPS pacing) ---
+        // `withDelay` replaces this LDY with JSR DELAY, which runs the
+        // long delay and returns Y=1 so the loop below runs once.
         0xAC, 0x05, 0x09,       // $0953 LDY $0905    (FPS_DLY)
         // DOUT at $0956:
         0xA2, 0x00,             // $0956 LDX #$00
@@ -162,7 +166,7 @@ enum VideoMLPlayer {
 
     // MARK: - 80-column player
     //
-    // Total size: 190 bytes ($0900-$09BD).
+    // Core: 194 bytes ($0900-$09C1); `withDelay` appends DELAY at $09C2.
     // Differences from the 40-col player:
     //   • Reads 2048 bytes into $4000 (HIRES page 2 — RAMWRT-switched, not
     //     80STORE-switched, so PAGE2 won't redirect $4000 reads to AUX).
@@ -176,7 +180,9 @@ enum VideoMLPlayer {
     //     COUT redirected to the 80-col card and the BRUN never reaches
     //     BASIC.SYSTEM.
     //   • FNAME = "FRAMES80".
-    static let play80Bytes: [UInt8] = [
+    static let play80Bytes: [UInt8] = withDelay(play80Core, ldyOffset: 0x76)
+
+    private static let play80Core: [UInt8] = [
         // --- Header: JMP to ENTRY_STUB, then the patchable data bytes ---
         // Entry goes via a diagnostic stub at $099A (in the padding
         // area between code and data) that beeps and falls into the
@@ -251,7 +257,7 @@ enum VideoMLPlayer {
         0xE8,                   // $0973 INX
         0xD0, 0xE5,             // $0974 BNE -27 → $095B (COPY_MAIN)
 
-        // --- Delay ---
+        // --- Delay (replaced by JSR DELAY, see `withDelay`) ---
         0xAC, 0x05, 0x09,       // $0976 LDY $0905    (FPS_DLY)
         // DOUT at $0979:
         0xA2, 0x00,             // $0979 LDX #$00
@@ -320,12 +326,12 @@ enum VideoMLPlayer {
     //
     // Identical to `play40Bytes` except:
     //   • The post-OPEN `JSR $FC58` (HOME) at `$0923` is swapped for
-    //     `JSR $09A2` — a tiny SETLORES subroutine appended after the
-    //     text-mode player's FNAME.
+    //     `JSR SETLORES` — a tiny subroutine appended after DELAY
+    //     ($09B7).
     //   • FNAME tail changes from "FRAMES40" to "FRAMESLO" so the
     //     player opens `/VIDEO/FRAMESLO` instead of the text frames.
     //
-    // SETLORES (5 instructions, 13 bytes at $09A2):
+    // SETLORES (5 instructions, 13 bytes):
     //     STA $C050  ; TEXT off / GR on
     //     STA $C052  ; MIXED off (full graphics)
     //     STA $C056  ; HIRES off → LORES
@@ -333,13 +339,14 @@ enum VideoMLPlayer {
     //     RTS
     static let playLoresBytes: [UInt8] = {
         var b = play40Bytes
-        // JSR $FC58 (HOME) at $0923 → JSR $09A2 (SETLORES)
-        b[0x24] = 0xA2
-        b[0x25] = 0x09
+        // JSR $FC58 (HOME) at $0923 → JSR SETLORES (appended below)
+        let setLores = loadAddress + b.count
+        b[0x24] = UInt8(setLores & 0xFF)
+        b[0x25] = UInt8(setLores >> 8)
         // FNAME tail "40" → "LO" (offsets $A0, $A1 = file bytes 0xA0, 0xA1)
         b[0xA0] = 0x4C   // 'L'
         b[0xA1] = 0x4F   // 'O'
-        // Append SETLORES at $09A2
+        // Append SETLORES
         b.append(contentsOf: [
             0x8D, 0x50, 0xC0,    // STA $C050
             0x8D, 0x52, 0xC0,    // STA $C052
@@ -354,11 +361,11 @@ enum VideoMLPlayer {
     //
     // Identical to `play80Bytes` except:
     //   • The `JSR $C300` (slot-3 80-col-card init) at `$0923` is
-    //     swapped for `JSR $09C2` — a SETDLORES subroutine appended
-    //     after the text-mode player's FNAME.
+    //     swapped for `JSR SETDLORES` — a subroutine appended after
+    //     DELAY ($09D7).
     //   • FNAME tail changes from "FRAMES80" to "FRAMESDL".
     //
-    // SETDLORES (5 instructions, 16 bytes at $09C2):
+    // SETDLORES (6 instructions, 16 bytes):
     //     JSR $C300  ; slot-3 init: turns on 80STORE + 80COL + ALTCHAR
     //                ;             (puts us briefly in 80-col TEXT)
     //     STA $C050  ; TEXT off → GR
@@ -377,13 +384,14 @@ enum VideoMLPlayer {
     // PAGE2 toggle, same `$4000` staging buffer, same READ size.
     static let playDloresBytes: [UInt8] = {
         var b = play80Bytes
-        // JSR $C300 at $0923 → JSR $09C2 (SETDLORES)
-        b[0x24] = 0xC2
-        b[0x25] = 0x09
+        // JSR $C300 at $0923 → JSR SETDLORES (appended below)
+        let setDlores = loadAddress + b.count
+        b[0x24] = UInt8(setDlores & 0xFF)
+        b[0x25] = UInt8(setDlores >> 8)
         // FNAME tail "80" → "DL" (offsets 0xC0, 0xC1)
         b[0xC0] = 0x44   // 'D'
         b[0xC1] = 0x4C   // 'L'
-        // Append SETDLORES at $09C2
+        // Append SETDLORES
         b.append(contentsOf: [
             0x20, 0x00, 0xC3,    // JSR $C300 (80-col card init)
             0x8D, 0x50, 0xC0,    // STA $C050 (TEXT off / GR on)
@@ -395,22 +403,70 @@ enum VideoMLPlayer {
         return b
     }()
 
-    // MARK: - FPS delay calibration
+    // MARK: - FPS delay
 
-    /// Inner delay loop (256 × DEX + DEY/BNE) costs ≈ 1.25 ms per outer
-    /// iteration on a 1 MHz 6502. After accounting for the ~125 ms disk
-    /// read for a 40-col frame (~250 ms for 80-col), we choose the smallest
-    /// outer-loop count that pads each frame up to the target period.
+    /// `BRUN` address of every player.
+    private static let loadAddress = 0x0900
+
+    /// DELAY subroutine, called in place of the core's `LDY FPS_DLY`.
+    /// Each outer iteration runs four 256-count DEX loops (5158 cycles,
+    /// ≈ 5.04 ms at 1.023 MHz), so FPS_DLY = 255 covers ≈ 1.29 s — enough
+    /// for 1 fps. The original 1.25 ms-per-unit loop topped out at 320 ms,
+    /// which made 1 and 2 fps play at ≈ 2.2 fps.
     ///
-    /// The result is clamped to 1…255 — the byte is stored at offset 0x02
-    /// of the player and read by `LDY FPS_DLY`.
+    ///     DELAY: LDY $0905   ; FPS_DLY
+    ///     D1:    LDA #4
+    ///     D2:    LDX #0
+    ///     D3:    DEX
+    ///            BNE D3
+    ///            SEC
+    ///            SBC #1
+    ///            BNE D2
+    ///            DEY
+    ///            BNE D1
+    ///            LDY #1      ; core's own delay loop then runs once
+    ///            RTS
+    private static let delayRoutine: [UInt8] = [
+        0xAC, 0x05, 0x09,       // +0  LDY $0905
+        0xA9, 0x04,             // +3  D1: LDA #4
+        0xA2, 0x00,             // +5  D2: LDX #0
+        0xCA,                   // +7  D3: DEX
+        0xD0, 0xFD,             // +8  BNE D3
+        0x38,                   // +10 SEC
+        0xE9, 0x01,             // +11 SBC #1
+        0xD0, 0xF6,             // +13 BNE D2
+        0x88,                   // +15 DEY
+        0xD0, 0xF1,             // +16 BNE D1
+        0xA0, 0x01,             // +18 LDY #1
+        0x60,                   // +20 RTS
+    ]
+
+    /// Append DELAY to `core` and turn its `LDY $0905` at `ldyOffset`
+    /// into `JSR DELAY` (both are 3 bytes, so nothing else moves).
+    private static func withDelay(_ core: [UInt8], ldyOffset: Int) -> [UInt8] {
+        precondition(Array(core[ldyOffset..<ldyOffset + 3]) == [0xAC, 0x05, 0x09],
+                     "player core changed — LDY FPS_DLY not at expected offset")
+        var b = core
+        let delay = loadAddress + core.count
+        b[ldyOffset]     = 0x20                       // JSR
+        b[ldyOffset + 1] = UInt8(delay & 0xFF)
+        b[ldyOffset + 2] = UInt8(delay >> 8)
+        b.append(contentsOf: delayRoutine)
+        return b
+    }
+
+    /// Picks FPS_DLY so each frame is padded up to the target period.
+    /// Assumes the ~125 ms disk read for a 40-col frame (~250 ms for
+    /// 80-col); each DELAY unit is ≈ 5.04 ms, plus a fixed ≈ 1.26 ms for
+    /// the single pass of the core's own loop. Clamped to 1…255; the
+    /// byte lives at file offset 5 of the player.
     static func fpsDelayValue(fps: Double, twoKBFrame: Bool = false) -> UInt8 {
         guard fps > 0 else { return 1 }
-        let periodMs    = 1000.0 / fps
-        let readMs      = twoKBFrame ? 250.0 : 125.0    // ProDOS ≈ 8 KB/s
-        let budgetMs    = max(0, periodMs - readMs)
-        let outerMsCost = 1.25                          // inner loop cost
-        let count       = max(1, Int((budgetMs / outerMsCost).rounded()))
+        let periodMs  = 1000.0 / fps
+        let readMs    = twoKBFrame ? 250.0 : 125.0    // ProDOS ≈ 8 KB/s
+        let budgetMs  = max(0, periodMs - readMs - 1.26)
+        let unitMs    = 5.04
+        let count     = max(1, Int((budgetMs / unitMs).rounded()))
         return UInt8(min(count, 255))
     }
 

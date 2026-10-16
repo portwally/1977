@@ -271,7 +271,8 @@ class ConverterViewModel: ObservableObject {
     }
 
     func exportProDOSDisk() {
-        guard let image = sourceImage else { return }
+        guard let source = sourceImage else { return }
+        let image = croppedImage(source, norm: cropRectNorm)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "po") ?? .data]
         panel.nameFieldStringValue = "\(sourceImageName.isEmpty ? "ascii_art" : sourceImageName).po"

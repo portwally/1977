@@ -418,16 +418,11 @@ struct VideoDiskExporter {
     ///
     /// **Display reset after BRUN.** The player can leave the machine
     /// in 40-col text, 80-col text (PR#3 active), LORES, or DLORES.
-    /// `POKE -16289,0` (STA `$C05F`) clears DHIRES (for DLORES). `TEXT`
-    /// switches the display to text — for 80-col modes the slot-3 card
-    /// is still hooked, so `HOME` clears both AUX and MAIN banks
-    /// (without this, AUX still holds the last DLORES frame and shows
-    /// up as garbled characters around the prompt).
+    /// `TEXT` switches the display back to text — without it, a LORES
+    /// player leaves graphics on and the STARTUP menu renders as color
+    /// blocks. `POKE -16289,0` (STA `$C05F`) clears DHIRES (for DLORES).
+    /// `PR# 0` unhooks the 80-col firmware before STARTUP runs.
     ///
-    /// **Exit behavior.** Single-mode disks `END` to the BASIC prompt;
-    /// multi-mode disks `-STARTUP` so the user lands back at the menu.
-    /// Both paths first `PR# 0` to close the 80-col card so STARTUP
-    /// renders in plain 40-col.
     /// Player wrapper — `HOME` → `LOADING` msg → `BRUN` player → reset
     /// display → re-launch `STARTUP`. Single-mode disks loop the same
     /// video continuously (STARTUP auto-launches the only mode);
@@ -454,6 +449,7 @@ struct VideoDiskExporter {
         src += "20 PRINT \"LOADING...\"\r"
         src += "30 PRINT CHR$(4);\"BRUN \(binName)\"\r"
         src += "40 NOTRACE\r"
+        src += "45 TEXT\r"
         src += "50 POKE -16289,0\r"
         src += "60 PR# 0\r"
         src += "70 PRINT CHR$(4);\"-STARTUP\""
