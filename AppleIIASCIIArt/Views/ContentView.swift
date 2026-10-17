@@ -79,7 +79,7 @@ struct ContentView: View {
             Button {
                 vm.showExportSheet = true
             } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
+                ToolbarButtonLabel(title: "Export", systemImage: "square.and.arrow.up")
             }
             .disabled(vm.result == nil)
             .keyboardShortcut("e", modifiers: .command)
@@ -90,7 +90,7 @@ struct ContentView: View {
             Button {
                 vm.copyToClipboard()
             } label: {
-                Label("Copy", systemImage: "doc.on.doc")
+                ToolbarButtonLabel(title: "Copy", systemImage: "doc.on.doc")
             }
             .disabled(vm.result == nil)
             .keyboardShortcut("c", modifiers: [.command, .shift])
@@ -101,7 +101,7 @@ struct ContentView: View {
             Button {
                 vm.openImageFilePicker()
             } label: {
-                Label("Open Image", systemImage: "photo")
+                ToolbarButtonLabel(title: "Open Image", systemImage: "photo")
             }
             .keyboardShortcut("o", modifiers: .command)
             .help("Open image file")
@@ -111,7 +111,7 @@ struct ContentView: View {
             Button {
                 openWindow(id: "video")
             } label: {
-                Label("Movie…", systemImage: "film")
+                ToolbarButtonLabel(title: "Convert Movie", systemImage: "film")
             }
             .keyboardShortcut("m", modifiers: .command)
             .help("Convert movie to ASCII art")

@@ -147,3 +147,27 @@ private struct ChromeBackgroundModifier: ViewModifier {
         }
     }
 }
+
+// MARK: - Toolbar buttons
+
+/// Label for a toolbar button: a large icon with its name underneath, so
+/// the action is clear without hovering for a tooltip. Used by both the
+/// image and video windows. Disabled buttons dim automatically.
+struct ToolbarButtonLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: systemImage)
+                .font(.system(size: 21))
+                .frame(height: 24)
+            Text(title)
+                .chromeFont(.footnote)
+                .lineLimit(1)
+        }
+        .frame(minWidth: 62)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+}

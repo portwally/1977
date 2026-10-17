@@ -600,7 +600,7 @@ struct VideoConverterView: View {
             Button {
                 vm.exportDisk()
             } label: {
-                Label("Export Disk", systemImage: "internaldrive")
+                ToolbarButtonLabel(title: "Export Disk", systemImage: "internaldrive")
             }
             // Enable as soon as ANY frame buffer has content — text 40,
             // text 80, LORES 40, or DLORES 80. The original check only
@@ -616,7 +616,7 @@ struct VideoConverterView: View {
             Button {
                 vm.openVideoFilePicker()
             } label: {
-                Label("Open Movie", systemImage: "film")
+                ToolbarButtonLabel(title: "Open Movie", systemImage: "film")
             }
             .disabled(vm.isBusy)
             .keyboardShortcut("o", modifiers: .command)
