@@ -33,7 +33,14 @@ enum VideoMLPlayer {
     //            Unrolled 4-page copy to $0400. Delay loop. Decrement
     //            REMAIN. Repeat.
     //   • DONE — MLI CLOSE, RTS to BASIC.
-    static let play40Bytes: [UInt8] = withDelay(play40Core, ldyOffset: 0x53)
+    private static let play40Base: [UInt8] = withDelay(play40Core, ldyOffset: 0x53)
+
+    /// 40-col player plus CLEAR and FINISH (see `withClearAndFinish`).
+    /// `clear` is CLEAR's address, reused by the LORES variant.
+    private static let play40Pre = withClearAndFinish(
+        play40Base, doneJSR: 0x6C, cparms: 0x0990, quit: 0x0972, is80: false)
+
+    static let play40Bytes: [UInt8] = play40Pre.bytes
 
     private static let play40Core: [UInt8] = [
         // --- Header: JMP to ENTRY_STUB, then the patchable data bytes ---
@@ -180,7 +187,124 @@ enum VideoMLPlayer {
     //     COUT redirected to the 80-col card and the BRUN never reaches
     //     BASIC.SYSTEM.
     //   • FNAME = "FRAMES80".
-    static let play80Bytes: [UInt8] = withDelay(play80Core, ldyOffset: 0x76)
+    private static let play80Base: [UInt8] = withDelay(play80Core, ldyOffset: 0x76)
+
+    /// 80-col player plus CLEAR and FINISH; the text and DLORES variants
+    /// each append their own display-setup routine after it.
+    private static let play80Pre = withClearAndFinish(
+        play80Base, doneJSR: 0x8F, cparms: 0x09B0, quit: 0x0995, is80: true)
+
+    /// Fills the *visible* text-page bytes of `$0400-$07FF` with A, skipping
+    /// the eight "screen hole" bytes at `+$78…+$7F` of every 128-byte
+    /// block. The holes aren't displayed but belong to the firmware: the
+    /// 80-col card keeps its cursor, mode flags and active-slot number
+    /// there (`$057B`, `$05FB`, `$07F8`, …). Filling them with `$A0` left
+    /// the menu printing at the wrong place after a DLORES run.
+    ///
+    ///     CLEAR: LDX #$77
+    ///     C1:    STA $0400,X / $0500,X / $0600,X / $0700,X
+    ///            DEX
+    ///            BPL C1              ; offsets $77…$00
+    ///            LDX #$F7
+    ///     C2:    STA $0400,X / … / $0700,X
+    ///            DEX
+    ///            CPX #$7F
+    ///            BNE C2              ; offsets $F7…$80
+    ///            RTS
+    ///
+    /// Used at both ends of playback. The display is switched before the
+    /// first frame has been read from disk (~125-250 ms), so without a
+    /// clear whatever the screen memory held — the wrapper's LOADING text
+    /// or the previous run's last frame, still sitting in the AUX bank —
+    /// shows until then. And when the player returns, the wrapper's
+    /// `TEXT` / 80COL-off would expose the last LORES / 80-col frame as
+    /// garbled characters until STARTUP's `HOME`.
+    private static let clearRoutine: [UInt8] = [
+        0xA2, 0x77,             // +0  LDX #$77
+        0x9D, 0x00, 0x04,       // +2  C1: STA $0400,X
+        0x9D, 0x00, 0x05,       // +5  STA $0500,X
+        0x9D, 0x00, 0x06,       // +8  STA $0600,X
+        0x9D, 0x00, 0x07,       // +11 STA $0700,X
+        0xCA,                   // +14 DEX
+        0x10, 0xF1,             // +15 BPL C1
+        0xA2, 0xF7,             // +17 LDX #$F7
+        0x9D, 0x00, 0x04,       // +19 C2: STA $0400,X
+        0x9D, 0x00, 0x05,       // +22 STA $0500,X
+        0x9D, 0x00, 0x06,       // +25 STA $0600,X
+        0x9D, 0x00, 0x07,       // +28 STA $0700,X
+        0xCA,                   // +31 DEX
+        0xE0, 0x7F,             // +32 CPX #$7F
+        0xD0, 0xEF,             // +34 BNE C2
+        0x60,                   // +36 RTS
+    ]
+
+    /// Appends CLEAR and FINISH to `base`, and points the core's DONE
+    /// `JSR $BF00` (MLI CLOSE, at file offset `doneJSR`) at FINISH.
+    ///
+    ///     FINISH: JSR $BF00 / CLOSE / CPARMS   ; same close as DONE
+    ///             STA $C051                    ; text mode
+    ///             LDA #$A0                     ; space
+    ///             JSR CLEAR                    ; (80-col: PAGE2 on → AUX,
+    ///                                          ;  CLEAR, PAGE2 off → MAIN,
+    ///                                          ;  CLEAR)
+    ///             PLA / PLA                    ; drop FINISH's return address
+    ///             JMP QUIT                     ; the core's RTS back to BASIC
+    private static func withClearAndFinish(
+        _ base: [UInt8], doneJSR: Int, cparms: Int, quit: Int, is80: Bool
+    ) -> (bytes: [UInt8], clear: Int) {
+        precondition(Array(base[doneJSR..<doneJSR + 3]) == [0x20, 0x00, 0xBF],
+                     "player core changed — DONE's JSR $BF00 not at expected offset")
+        var b = base
+        let clear = loadAddress + b.count
+        b.append(contentsOf: clearRoutine)
+        let finish = loadAddress + b.count
+        b[doneJSR + 1] = UInt8(finish & 0xFF)
+        b[doneJSR + 2] = UInt8(finish >> 8)
+        let jsrClear: [UInt8] = [0x20, UInt8(clear & 0xFF), UInt8(clear >> 8)]
+        var f: [UInt8] = [
+            0x20, 0x00, 0xBF,                              // JSR $BF00
+            0xCC, UInt8(cparms & 0xFF), UInt8(cparms >> 8), // CLOSE, CPARMS
+            0x8D, 0x51, 0xC0,                              // STA $C051 (TEXT on)
+            0xA9, 0xA0,                                    // LDA #$A0
+        ]
+        if is80 {
+            f += [0x8D, 0x55, 0xC0] + jsrClear             // PAGE2 on → AUX
+            f += [0x8D, 0x54, 0xC0] + jsrClear             // PAGE2 off → MAIN
+        } else {
+            f += jsrClear
+        }
+        f += [0x68, 0x68, 0x4C, UInt8(quit & 0xFF), UInt8(quit >> 8)]
+        b.append(contentsOf: f)
+        return (b, clear)
+    }
+
+    /// 80-col TEXT player. `JSR $C300` at `$0923` is replaced by
+    /// `JSR SET80`:
+    ///
+    ///     SET80: JSR $C300   ; 80-col card init (80STORE on)
+    ///            LDA #$A0    ; space
+    ///            STA $C055   ; PAGE2 on  → $0400 writes go to AUX
+    ///            JSR CLEAR
+    ///            STA $C054   ; PAGE2 off → MAIN
+    ///            JSR CLEAR
+    ///            RTS
+    static let play80Bytes: [UInt8] = {
+        var b = play80Pre.bytes
+        let clear = play80Pre.clear
+        let set80 = loadAddress + b.count
+        b[0x24] = UInt8(set80 & 0xFF)
+        b[0x25] = UInt8(set80 >> 8)
+        b.append(contentsOf: [
+            0x20, 0x00, 0xC3,                                // JSR $C300
+            0xA9, 0xA0,                                      // LDA #$A0
+            0x8D, 0x55, 0xC0,                                // STA $C055
+            0x20, UInt8(clear & 0xFF), UInt8(clear >> 8),    // JSR CLEAR
+            0x8D, 0x54, 0xC0,                                // STA $C054
+            0x20, UInt8(clear & 0xFF), UInt8(clear >> 8),    // JSR CLEAR
+            0x60,                                            // RTS
+        ])
+        return b
+    }()
 
     private static let play80Core: [UInt8] = [
         // --- Header: JMP to ENTRY_STUB, then the patchable data bytes ---
@@ -331,14 +455,18 @@ enum VideoMLPlayer {
     //   • FNAME tail changes from "FRAMES40" to "FRAMESLO" so the
     //     player opens `/VIDEO/FRAMESLO` instead of the text frames.
     //
-    // SETLORES (5 instructions, 13 bytes):
+    // SETLORES:
     //     STA $C050  ; TEXT off / GR on
     //     STA $C052  ; MIXED off (full graphics)
     //     STA $C056  ; HIRES off → LORES
     //     STA $C054  ; PAGE2 off (TXTPAGE1 — main $0400)
+    //     LDA #0     ; black
+    //     JSR CLEAR  ; otherwise the leftover text page shows as grey
+    //                ; stripes until the first frame arrives
     //     RTS
     static let playLoresBytes: [UInt8] = {
-        var b = play40Bytes
+        var b = play40Pre.bytes
+        let clear = play40Pre.clear
         // JSR $FC58 (HOME) at $0923 → JSR SETLORES (appended below)
         let setLores = loadAddress + b.count
         b[0x24] = UInt8(setLores & 0xFF)
@@ -352,26 +480,32 @@ enum VideoMLPlayer {
             0x8D, 0x52, 0xC0,    // STA $C052
             0x8D, 0x56, 0xC0,    // STA $C056
             0x8D, 0x54, 0xC0,    // STA $C054
-            0x60,                 // RTS
+            0xA9, 0x00,          // LDA #$00
+            0x20, UInt8(clear & 0xFF), UInt8(clear >> 8),   // JSR CLEAR
+            0x60,                // RTS
         ])
         return b
     }()
 
     // MARK: - Double-LORES (80 cols × 48 vert color blocks)
     //
-    // Identical to `play80Bytes` except:
+    // Identical to the 80-col text player except:
     //   • The `JSR $C300` (slot-3 80-col-card init) at `$0923` is
     //     swapped for `JSR SETDLORES` — a subroutine appended after
     //     DELAY ($09D7).
     //   • FNAME tail changes from "FRAMES80" to "FRAMESDL".
     //
-    // SETDLORES (6 instructions, 16 bytes):
+    // SETDLORES:
     //     JSR $C300  ; slot-3 init: turns on 80STORE + 80COL + ALTCHAR
     //                ;             (puts us briefly in 80-col TEXT)
     //     STA $C050  ; TEXT off → GR
     //     STA $C052  ; MIXED off → FULL
     //     STA $C056  ; HIRES off → LORES
     //     STA $C05E  ; DHIRES on → DLORES
+    //     LDA #0     ; black
+    //     STA $C055 / JSR CLEAR   ; clear AUX
+    //     STA $C054 / JSR CLEAR   ; clear MAIN (no stale last frame in
+    //                             ; either bank while the first loads)
     //     RTS
     //
     // Why JSR $C300 and not bare STA $C001: pure `80STORE` ON without
@@ -380,10 +514,11 @@ enum VideoMLPlayer {
     // $C300 sets all three display-side bits (80STORE + 80COL + ALTCHAR)
     // in one shot — same call the working 80-col TEXT player uses.
     //
-    // The AUX/MAIN copy loop in `play80Bytes` is reused verbatim — same
+    // The AUX/MAIN copy loop in `play80Core` is reused verbatim — same
     // PAGE2 toggle, same `$4000` staging buffer, same READ size.
     static let playDloresBytes: [UInt8] = {
-        var b = play80Bytes
+        var b = play80Pre.bytes
+        let clear = play80Pre.clear
         // JSR $C300 at $0923 → JSR SETDLORES (appended below)
         let setDlores = loadAddress + b.count
         b[0x24] = UInt8(setDlores & 0xFF)
@@ -398,7 +533,12 @@ enum VideoMLPlayer {
             0x8D, 0x52, 0xC0,    // STA $C052 (MIXED off / FULL)
             0x8D, 0x56, 0xC0,    // STA $C056 (HIRES off / LORES)
             0x8D, 0x5E, 0xC0,    // STA $C05E (DHIRES on → DLORES)
-            0x60,                 // RTS
+            0xA9, 0x00,          // LDA #$00
+            0x8D, 0x55, 0xC0,    // STA $C055 (PAGE2 on → AUX)
+            0x20, UInt8(clear & 0xFF), UInt8(clear >> 8),   // JSR CLEAR
+            0x8D, 0x54, 0xC0,    // STA $C054 (PAGE2 off → MAIN)
+            0x20, UInt8(clear & 0xFF), UInt8(clear >> 8),   // JSR CLEAR
+            0x60,                // RTS
         ])
         return b
     }()
