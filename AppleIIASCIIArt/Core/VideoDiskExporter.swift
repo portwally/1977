@@ -416,11 +416,21 @@ struct VideoDiskExporter {
     /// as the only statement on its line sidesteps that.
     ///
     /// **Display reset after BRUN.** The player can leave the machine
-    /// in 40-col text, 80-col text (PR#3 active), LORES, or DLORES.
-    /// `TEXT` switches the display back to text — without it, a LORES
-    /// player leaves graphics on and the STARTUP menu renders as color
-    /// blocks. `POKE -16289,0` (STA `$C05F`) clears DHIRES (for DLORES).
-    /// `PR# 0` unhooks the 80-col firmware before STARTUP runs.
+    /// in 40-col text, 80-col text, LORES, or DLORES. `TEXT` switches
+    /// graphics off (otherwise a LORES player leaves the STARTUP menu
+    /// drawn as color blocks); the POKEs clear DHIRES (`$C05F`), 80COL
+    /// (`$C00C`), 80STORE (`$C000`) and ALTCHARSET (`$C00E`). The 80-col
+    /// firmware also leaves the text window 80 columns wide (WNDWDTH,
+    /// `$21`); `POKE 33,40` resets it. Without that, STARTUP's `HOME`
+    /// clears 80 bytes per row in 40-col memory, runs past `$07FF` and
+    /// zeroes the freshly loaded STARTUP program (`?SYNTAX ERROR IN 10`).
+    ///
+    /// **Why not `PR# 0`.** A raw `PR# 0` points CSW straight at the ROM
+    /// COUT, and the 80-col players' `JSR $C300` points it at the slot-3
+    /// firmware — either way BASIC.SYSTEM's hook is gone, so the final
+    /// `PRINT CHR$(4);"-STARTUP"` is printed as text and the disk stops
+    /// at the `]` prompt. Instead the wrapper copies CSW/KSW (`$36-$39`)
+    /// to `$0300-$0303` before the `BRUN` and POKEs them back afterwards.
     ///
     /// Player wrapper — `HOME` → `LOADING` msg → `BRUN` player → reset
     /// display → re-launch `STARTUP`. Single-mode disks loop the same
@@ -429,11 +439,11 @@ struct VideoDiskExporter {
     /// again. No interactive prompt — the user reboots (Ctrl-Reset) to
     /// quit, which is the standard Apple II "I'm done" gesture.
     ///
-    /// **`NOTRACE` after the BRUN.** Something during slot-3 firmware
-    /// init (`JSR $C300` inside the 80-col / DLORES players) leaves
-    /// Applesoft's trace flag at `$F2` non-zero, so subsequent lines
-    /// print as `#NN`. Explicit `NOTRACE` clears the flag before we
-    /// re-launch STARTUP.
+    /// **`NOTRACE` right after the BRUN.** Something during slot-3
+    /// firmware init (`JSR $C300` inside the 80-col / DLORES players)
+    /// can leave Applesoft's trace flag at `$F2` non-zero, so subsequent
+    /// lines print as `#NN`. It comes before the hook-restoring POKEs so
+    /// no trace output goes through a half-restored CSW.
     ///
     /// **Why every statement is on its own line.** A `PRINT
     /// CHR$(4);"BRUN …"` mid-line corrupts Applesoft's text pointer on
@@ -445,12 +455,20 @@ struct VideoDiskExporter {
         _ = label   // intentionally unused — mode label dropped from msg
         var src = ""
         src += "10 HOME\r"
+        // Stash BASIC.SYSTEM's output/input hooks (CSW $36-$37, KSW $38-$39)
+        // in free page-3 RAM. Not in BASIC variables: they live right after
+        // the program, i.e. under the player that BRUN loads at $0900.
+        src += "15 FOR I=0 TO 3:POKE 768+I,PEEK(54+I):NEXT\r"
         src += "20 PRINT \"LOADING...\"\r"
         src += "30 PRINT CHR$(4);\"BRUN \(binName)\"\r"
-        src += "40 NOTRACE\r"
+        src += "31 NOTRACE\r"
+        src += "35 FOR I=0 TO 3:POKE 54+I,PEEK(768+I):NEXT\r"
         src += "45 TEXT\r"
-        src += "50 POKE -16289,0\r"
-        src += "60 PR# 0\r"
+        src += "50 POKE -16289,0\r"     // DHIRES off
+        src += "52 POKE -16372,0\r"     // 80COL off
+        src += "54 POKE -16384,0\r"     // 80STORE off
+        src += "56 POKE -16370,0\r"     // ALTCHARSET off
+        src += "58 POKE 33,40\r"        // text window back to 40 columns
         src += "70 PRINT CHR$(4);\"-STARTUP\""
         return src
     }
