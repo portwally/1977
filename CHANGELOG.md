@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Movie → Apple II video converter** (Video window): converts MP4/MOV into a bootable ProDOS disk with a 6502 ML player. Output modes: 40-col text, 80-col text, 40-col LORES color, 80-col Double-LORES color — any combination on one disk, with a STARTUP menu
+- Disk formats: 140 KB and 800 KB floppy (`.po`), 32 MB hard disk (`.2mg`, `.hdv`)
+- Exact per-disk frame capacity, computed from the real PRODOS / BASIC.SYSTEM sizes and generated programs (see Fixed)
+
+### Changed
+- Video playback delay is now accurate down to 1 fps (was limited to about 320 ms per frame, so 1 and 2 fps both played at about 2.2 fps)
+- Non-ASCII characters (e.g. from block-element ramps) are written as spaces in Apple II text, Applesoft BASIC and disk exports, so rows keep their width
+- Video window: opening a movie, re-extracting and exporting are disabled while a job is running; settings changed during extraction are applied once extraction finishes
+
+### Fixed
+- **Disk capacity overestimate** — exporting at the advertised maximum frame count failed with "Not enough free blocks" (for example 99 or more 40-col frames on a 140 KB disk). The block allocator also skipped blocks 0–23 even when free
+- **Corrupt 256-block files** — a file with exactly 256 data blocks was marked as a tree file but laid out as a sapling and read back as empty (hit at 128 frames of 40-col, 64 of 80-col)
+- **Files over 16 MB** are now rejected with an error instead of being silently truncated; the frame limit on 32 MB disks accounts for this
+- **Slow 32 MB exports** — block allocation copied the whole disk image per block (a 4 MB file took about 20 s, 17 MB about 84 s); it now edits in place and takes well under a second
+- LORES / DLORES disks returned to the STARTUP menu in graphics mode, so the menu showed as color blocks; the player wrapper now switches back to text
+- Image disk export ignored the crop selection
+- Applesoft BASIC export failed (and disk export misaligned rows) when the ramp contained non-ASCII characters, such as Apple II Blocks
+- ProDOS creation timestamps had the minute and hour swapped and a year of 126 instead of 26
+- The Applesoft tokenizer never tokenized `&`
+- Starting a second video load or export while one was running could overwrite frame buffers or write a partial disk
+- LORES palette comments labelled the two grays the wrong way round (no change to colors); removed `[v4]` debug tags from video status messages
+
 ## [1.1.0] - 2026-05-07
 
 ### Added

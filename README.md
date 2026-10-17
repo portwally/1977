@@ -90,6 +90,10 @@ Each disk carries:
 
 Drop an MP4 or MOV into the **Video** window and 1977 streams every frame through the same ASCII / LORES converter, then writes a bootable ProDOS disk that plays the video back on real Apple II / IIgs hardware. Four output modes ship on one disk — 40-col text, 80-col text, 40-col LORES color, 80-col Double-LORES color — with a built-in 6502 ML player that streams frames from disk into text-page 1 in real time.
 
+- **Disk formats** — 140 KB or 800 KB floppy (`.po`), or a 32 MB hard-disk image (`.2mg` / `.hdv`). The Disk Info panel shows how many frames fit; the limit is computed from the exact size of the ProDOS system files and players, so an export at the stated maximum always succeeds. A single frames file is capped at ProDOS's 16 MB file limit.
+- **Frame rate** — 1, 2, 4, 6 or 8 fps. The player paces playback with a calibrated delay on top of the disk read time, so the slow rates (1 and 2 fps) run at the chosen speed; faster rates are limited by how quickly the disk can stream frames.
+- **Character ramps** — only ramps made of plain ASCII are offered, since the Apple II character ROM can't show Unicode blocks or PETSCII glyphs. In the image converter, any such characters in an Apple II export are written as spaces.
+
 <p align="center">
   <img src="docs/images/screenshot-video-dlores.png" width="640" alt="1977 Video converter window showing Both LORES (40+80) mode with an arcade scene previewed in Double-LORES color">
 </p>
