@@ -34,6 +34,7 @@ struct VideoConverterView: View {
         // restricted to the same UTTypes the file picker shows.
         .onDrop(of: [.mpeg4Movie, .quickTimeMovie],
                 isTargeted: nil) { providers in
+            guard !vm.isBusy else { return false }
             vm.loadDroppedProviders(providers)
             return true
         }
@@ -607,7 +608,7 @@ struct VideoConverterView: View {
             // itself out for LORES-only exports.
             .disabled((vm.frames40.isEmpty && vm.frames80.isEmpty
                        && vm.framesLo.isEmpty && vm.framesDl.isEmpty)
-                      || vm.isExporting)
+                      || vm.isBusy)
             .keyboardShortcut("e", modifiers: .command)
             .help("Export bootable ProDOS disk image")
         }
@@ -617,6 +618,7 @@ struct VideoConverterView: View {
             } label: {
                 Label("Open Movie", systemImage: "film")
             }
+            .disabled(vm.isBusy)
             .keyboardShortcut("o", modifiers: .command)
             .help("Open movie file")
         }

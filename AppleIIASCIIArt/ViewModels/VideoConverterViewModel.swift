@@ -83,6 +83,10 @@ final class VideoConverterViewModel: ObservableObject {
 
     // MARK: - Computed
 
+    /// True while any background job owns the frame buffers. New loads,
+    /// re-extracts and exports are refused until it clears.
+    var isBusy: Bool { isExtracting || isConverting || isExporting }
+
     /// Frames the chosen disk format can hold for the selected mode(s).
     var maxFrames: Int {
         VideoDiskExporter.maxFrames(format: diskFormat,
@@ -155,6 +159,9 @@ final class VideoConverterViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var reconvertTask: Task<Void, Never>?
     private var playbackTask: Task<Void, Never>?
+    /// Set when settings change while frames are still being extracted;
+    /// the finished frames are re-converted once extraction ends.
+    private var reconvertPending = false
 
     init() {
         // Debounced re-convert on any settings change once frames are loaded.
@@ -204,6 +211,7 @@ final class VideoConverterViewModel: ObservableObject {
     /// greyed out, since AVFoundation on macOS can't reliably decode
     /// those without third-party codecs.
     func openVideoFilePicker() {
+        guard !isBusy else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes     = [.mpeg4Movie, .quickTimeMovie]
         panel.allowsMultipleSelection = false
@@ -217,7 +225,7 @@ final class VideoConverterViewModel: ObservableObject {
 
     /// Drop-handler version: accept the first .fileURL provider.
     func loadDroppedProviders(_ providers: [NSItemProvider]) {
-        guard let p = providers.first else { return }
+        guard !isBusy, let p = providers.first else { return }
         if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             p.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { [weak self] item, _ in
                 let url: URL? = {
@@ -233,6 +241,7 @@ final class VideoConverterViewModel: ObservableObject {
     }
 
     func loadVideo(from url: URL) async {
+        guard !isBusy else { return }
         AppDebugLog.shared.clear()
         appLog("VM [v4]: loadVideo START url=\(url.lastPathComponent)")
         videoURL  = url
@@ -263,7 +272,7 @@ final class VideoConverterViewModel: ObservableObject {
     /// into ASCIIResult(s), then released. Memory usage stays bounded
     /// (~300 KB live × small backbuffer) regardless of video length.
     func processFrames() async {
-        guard let url = videoURL else { return }
+        guard let url = videoURL, !isExtracting, !isConverting, !isExporting else { return }
 
         // Stop any preview playback before we wipe the frame arrays.
         stopPlayback()
@@ -317,7 +326,7 @@ final class VideoConverterViewModel: ObservableObject {
         let expectedTotal = extractionCap
         appLog("VM [v4]: expectedTotal = \(expectedTotal) frames")
 
-        statusMessage = "Processing [v4] from \(String(format: "%.1f", videoDuration))s source → \(expectedTotal) frames…"
+        statusMessage = "Processing from \(String(format: "%.1f", videoDuration))s source → \(expectedTotal) frames…"
 
         do {
             appLog("VM [v4]: calling streamFrames(durationOverride: \(videoDuration), maxFrames: \(extractionCap))")
@@ -392,7 +401,7 @@ final class VideoConverterViewModel: ObservableObject {
 
                 let done = chunk.index + 1
                 progress = Double(done) / Double(chunk.total)
-                statusMessage = "Processing [v4] frame \(done) / \(chunk.total)…"
+                statusMessage = "Processing frame \(done) / \(chunk.total)…"
                 // Log only sparsely so we don't drown the debug panel —
                 // the per-chunk logs in the extractor already give us
                 // the per-30s granularity.
@@ -428,13 +437,18 @@ final class VideoConverterViewModel: ObservableObject {
         let dropped = max(0, effectiveTotal - count)
         appLog("VM [v4]: processFrames END count=\(count) seenTotal=\(seenTotal) expectedTotal=\(expectedTotal) effectiveTotal=\(effectiveTotal) dropped=\(dropped)")
         if dropped > 0 {
-            statusMessage = "Ready [v4] · \(count) / \(effectiveTotal) frames (lost \(dropped)) · " +
+            statusMessage = "Ready · \(count) / \(effectiveTotal) frames (lost \(dropped)) · " +
                             "\(String(format: "%.1f", estimatedDuration)) s playback"
         } else {
-            statusMessage = "Ready [v4] · \(count) frame\(count == 1 ? "" : "s") · " +
+            statusMessage = "Ready · \(count) frame\(count == 1 ? "" : "s") · " +
                             "\(String(format: "%.1f", estimatedDuration)) s playback"
         }
         previewFrameIndex = 0
+
+        if reconvertPending {
+            reconvertPending = false
+            reconvertExistingFrames()
+        }
     }
 
     /// Re-run conversion on the already-extracted `rawFrames` without
@@ -447,6 +461,9 @@ final class VideoConverterViewModel: ObservableObject {
     /// the override is the only reliable way to know what mode the user
     /// actually wants right now.
     private func reconvertExistingFrames(overrideMode: VideoColMode? = nil) {
+        // Mid-extraction `rawFrames` is only partial; redo the conversion
+        // once it's complete so the new settings apply to every frame.
+        if isExtracting { reconvertPending = true; return }
         guard !rawFrames.isEmpty else { return }
         reconvertTask?.cancel()
 
@@ -552,6 +569,7 @@ final class VideoConverterViewModel: ObservableObject {
             errorMessage = "Load and process a video first."
             return
         }
+        guard !isExtracting, !isConverting, !isExporting else { return }
         let panel = NSSavePanel()
         let ext   = diskFormat.fileExtension
         panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]

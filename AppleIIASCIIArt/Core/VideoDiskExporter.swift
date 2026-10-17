@@ -394,8 +394,7 @@ struct VideoDiskExporter {
     }
 
     /// Builds a player wrapper: HOME → LOADING msg → BRUN player → (player
-    /// runs animation, then RTS-es back) → "PLAY AGAIN? (Y/N)" prompt →
-    /// re-BRUN on Y, exit on N.
+    /// runs animation, then RTS-es back) → reset display → re-launch STARTUP.
     ///
     /// **Why the wrapper has to be tiny.** Applesoft programs load at
     /// `$0801` and the player binary is `BRUN`-ed at `$0900` — only

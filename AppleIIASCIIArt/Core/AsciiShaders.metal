@@ -110,12 +110,12 @@ constant float3 loresPalette[16] = {
     float3(  0,   0, 153) / 255.0,   // 2  Dark Blue
     float3(221,   0, 221) / 255.0,   // 3  Purple
     float3(  0, 119,  34) / 255.0,   // 4  Dark Green
-    float3( 85,  85,  85) / 255.0,   // 5  Gray (light)
+    float3( 85,  85,  85) / 255.0,   // 5  Gray (dark)
     float3( 34,  34, 255) / 255.0,   // 6  Medium Blue
     float3(102, 170, 255) / 255.0,   // 7  Light Blue
     float3(136,  85,   0) / 255.0,   // 8  Brown
     float3(255, 102,   0) / 255.0,   // 9  Orange
-    float3(170, 170, 170) / 255.0,   // 10 Gray (dark)
+    float3(170, 170, 170) / 255.0,   // 10 Gray (light)
     float3(255, 153, 136) / 255.0,   // 11 Pink
     float3( 17, 221,   0) / 255.0,   // 12 Light Green
     float3(255, 255,   0) / 255.0,   // 13 Yellow

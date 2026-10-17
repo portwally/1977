@@ -486,7 +486,8 @@ class ProDOSWriter {
         let calendar = Calendar.current
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: now)
 
-        let year = min((components.year ?? 2024) - 1900, 127)
+        // ProDOS stores the year as 0-99 (40-99 = 1940-1999, 0-39 = 2000-2039).
+        let year = (components.year ?? 2026) % 100
         let month = components.month ?? 1
         let day = components.day ?? 1
         let hour = components.hour ?? 0
@@ -495,8 +496,9 @@ class ProDOSWriter {
         let dateWord = (year << 9) | (month << 5) | day
         entry[0x18] = UInt8(dateWord & 0xFF)
         entry[0x19] = UInt8((dateWord >> 8) & 0xFF)
-        entry[0x1A] = UInt8(hour & 0x1F)
-        entry[0x1B] = UInt8(minute & 0x3F)
+        // Time is minute (low byte) then hour (high byte).
+        entry[0x1A] = UInt8(minute & 0x3F)
+        entry[0x1B] = UInt8(hour & 0x1F)
 
         entry[0x1C] = 0x00
         entry[0x1D] = 0x00
@@ -591,14 +593,14 @@ class ProDOSWriter {
         let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: now)
 
         if let year = components.year, let month = components.month, let day = components.day {
-            let proDOSYear = min(year - 1900, 127)
+            let proDOSYear = year % 100
             let dateWord = UInt16((proDOSYear << 9) | (month << 5) | day)
             bytes[blockOffset + 0x1C] = UInt8(dateWord & 0xFF)
             bytes[blockOffset + 0x1D] = UInt8((dateWord >> 8) & 0xFF)
         }
 
         if let hour = components.hour, let minute = components.minute {
-            let timeWord = UInt16((minute << 8) | hour)
+            let timeWord = UInt16((hour << 8) | minute)   // low byte = minute, high = hour
             bytes[blockOffset + 0x1E] = UInt8(timeWord & 0xFF)
             bytes[blockOffset + 0x1F] = UInt8((timeWord >> 8) & 0xFF)
         }
