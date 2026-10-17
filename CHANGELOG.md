@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exact per-disk frame capacity, computed from the real PRODOS / BASIC.SYSTEM sizes and generated programs (see Fixed)
 
 ### Changed
-- Toolbar buttons in the image and video windows are now larger, with their name underneath the icon (Export, Copy, Open Image, Convert Movie; Export Disk, Open Movie) instead of icon-only
+- Toolbar buttons in the image and video windows are now larger, with their name underneath the icon (Export, Copy, Import, Convert Movie; Export Disk, Open Movie) instead of icon-only
 - Video playback delay is now accurate down to 1 fps (was limited to about 320 ms per frame, so 1 and 2 fps both played at about 2.2 fps)
 - Non-ASCII characters (e.g. from block-element ramps) are written as spaces in Apple II text, Applesoft BASIC and disk exports, so rows keep their width
 - Video window: opening a movie, re-extracting and exporting are disabled while a job is running; settings changed during extraction are applied once extraction finishes

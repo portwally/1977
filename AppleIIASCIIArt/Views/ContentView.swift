@@ -101,7 +101,7 @@ struct ContentView: View {
             Button {
                 vm.openImageFilePicker()
             } label: {
-                ToolbarButtonLabel(title: "Open Image", systemImage: "photo")
+                ToolbarButtonLabel(title: "Import", systemImage: "photo")
             }
             .keyboardShortcut("o", modifiers: .command)
             .help("Open image file")
